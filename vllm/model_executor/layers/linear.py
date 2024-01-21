@@ -13,10 +13,15 @@ from vllm.model_executor.parallel_utils.utils import (
     divide, split_tensor_along_last_dim)
 from vllm.model_executor.utils import set_weight_attrs
 from vllm.logger import init_logger
-
+from vllm.model_executor.global_dict_ import _init, get_dict_, set_dict_, get_in_, set_out_, get_out_##
 logger = init_logger(__name__)
+import json
+from vllm.model_executor.MyEncoder import MyEncoder
+import _pickle as cPickle
+import h5py
+import os
 
-
+#_init()
 class LinearMethodBase(ABC):
     """Base class for different (maybe quantized) linear methods."""
 
@@ -204,19 +209,23 @@ class ColumnParallelLinear(torch.nn.Module):
         assert param_data.shape == loaded_weight.shape
         param_data.copy_(loaded_weight)
 
-    def forward(self, input_):
+    def forward(self, layer_num, input_):
         bias = self.bias if not self.skip_bias_add else None
 
         # Matrix multiply.
+        
         output_parallel = self.linear_method.apply_weights(
             self.linear_weights, input_, bias)
         if self.gather_output:
             # All-gather across the partitions.
+            #print("yes")
             output = tensor_model_parallel_all_gather(output_parallel)
+            
         else:
+            #print("output_parallel:", output_parallel.size)
             output = output_parallel
-        output_bias = self.bias if self.skip_bias_add else None
-        return output, output_bias
+           
+        return output, bias
 
 
 class MergedColumnParallelLinear(ColumnParallelLinear):
@@ -423,10 +432,7 @@ class QKVParallelLinear(ColumnParallelLinear):
                 shard_offset = shard_offset // param.pack_factor
             param_data = param_data.narrow(output_dim, shard_offset,
                                            shard_size)
-            if loaded_shard_id == "q":
-                shard_id = tp_rank
-            else:
-                shard_id = tp_rank // self.num_kv_head_replicas
+            shard_id = tp_rank // self.num_kv_head_replicas
             start_idx = shard_id * shard_size
             loaded_weight = loaded_weight.narrow(output_dim, start_idx,
                                                  shard_size)
@@ -531,7 +537,7 @@ class RowParallelLinear(torch.nn.Module):
         assert param_data.shape == loaded_weight.shape
         param_data.copy_(loaded_weight)
 
-    def forward(self, input_):
+    def forward(self, layer_num, input_):
         # Set up backprop all-reduce.
         if self.input_is_parallel:
             input_parallel = input_
@@ -545,7 +551,29 @@ class RowParallelLinear(torch.nn.Module):
         output_parallel = self.linear_method.apply_weights(
             self.linear_weights, input_parallel)
         if self.reduce_results and self.tp_size > 1:
+            
             output_ = tensor_model_parallel_all_reduce(output_parallel)
+            if (layer_num == 10):
+                tp_rank = get_tensor_model_parallel_rank()##
+                dict__ = get_dict_()
+
+                print('yes')
+                dict__[len(dict__)] = output_parallel
+                set_dict_(dict__)
+                set_out_(output_)
+                #f = h5py.File('train_set_.h5','w')   #创建一个h5文件，文件指针是f
+                #f[str(len(f))] = [layer_num, dict__]     #将数据写入文件的主键data下面
+                in_ = get_in_()
+                path = "autodl-fs/train_set_" + str(in_) + '.pkl'
+                '''  
+                with open(path, "r", errors='ignore') as f: 
+                    content = cPickle.load(f, strict=False)
+                    num_ = content['0'] + 1
+                content[0] = num_
+                content.update(dict__)'''
+
+                #with open(path, 'ab') as f_new:
+                 #   cPickle.dump(dict__, f_new) 
         else:
             output_ = output_parallel
 
